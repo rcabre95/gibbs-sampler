@@ -1,0 +1,257 @@
+---
+title: "Gibbs Sampling"
+author: "Raphael Cabrera"
+date: "10/17/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preface
+
+When searching for a target density $f$, one can use one of many Markov Chain Monte Carlo (MCMC) methods to generate a draw from a distribution that approximates $f$. These methods are more commonly viewed as methods for generating from which expectations of parameters can be estimated. One of these such methods is the Gibbs sampling algorithm. The Gibbs sampler is an MCMC algorithm that has been adapted to sample from multidimensional target distributions. The basic Gibbs sampler algorithm is as follows:  
+1. Select starting values $x^{(0)}$, and set $t = 0$.  
+2. Generate, in turn,  
+![alt text](paraexample.png "Generalized algorithm step 2")
+
+where $\left.\right\vert\cdot$ denotes a condition on the most recent updates to all other elements of $X$.  
+3. Increment $t$ and go to step 2.  
+  
+A good performance measure for these MCMC algorithms, specifically the Gibbs sampler, is determining how well the algorithm is "mixing." In other words, the faster the algorithm converges to its target parameter(s), the better the overall performance of the algorithm. This performance can be enhanced when the components of the proposal distribution can be made more independant. To reduce dependence, reparameterization is the main type of strategy. In this example a more specific reparameterization strategy, called hierarchical centering, is used. Because the purposes of this project surround the implementation of the algorithm and not the mathematics behind it, this will be the extent of the or hierarchical centering, more information can be found [here](https://www.jstor.org/stable/2337527).  
+
+## What Is Given
+
+Consider a model  
+  
+$$
+Y_{ij}=\mu + \alpha_i + \beta_{j(i)} + \epsilon_{ijk}, \qquad i=1,\ldots,I,\quad j=1,\ldots,J_i
+$$
+  
+where we let $Y_{ij}=\sum_{k=1}^{K} Y_{ijk}/K$, $\alpha_i \sim N(0, \sigma_{\alpha}^2)$, and $\beta_{j(i)}\sim N(0,\sigma_{\beta}^2)$. Further, we know that the conditional distributions necessary to carry out Gibbs sampling are given by
+![alt text](initial.png "Distributions before reparametrization")
+
+
+The convergence rate and performance of a Gibbs sampler can sometimes be improved using reparameterization via hierarchical centering. Through this method we let $\eta_{ij}= \mu\;+\;\alpha_{i}\;+\;\beta_{j(i)}$ and $\epsilon_{ij}\sim N\left( 0, \sigma_{\epsilon}^2 \right)$. We assume that $\sigma_{\alpha}^2 = 86$, $\sigma_{\beta}^2=58$, and $\sigma_{\epsilon}^2=1$.  
+After reparameterization, the conditional distributions necessary to use a Gibbs sampler are given by  
+![alt text](repara.png "reparameterized distributions")
+.  
+
+## The Problem
+
+The goal of this project is to determine the effectiveness of this specific reparameterization by comparing the two model parameterizations above by their performance. To do this, each sampler will be used on the same dataset, and diagnostics will be run and compared.  
+
+### The Dataset
+
+The dataset can be found in the GitHub repository associated with this document, or downloaded [here](https://raw.githubusercontent.com/rcabre95/gibbs-sampler/master/pigment.dat). This dataset consists of data on moisture content in the manufacture of pigment paste. The pigment was produced in batches and the moisture content of each batch was tested. The dataset consists of 15 randomly selected batches of pigment, and for each batch, two independent samples were randomly selected, and measured twice. Recall that $\sigma_{\alpha}^{2}=86$, $\sigma_{\beta}^{2}=58$, and $\sigma_{\epsilon}^{2}=1$.  
+
+## The Solution
+
+First, the data must be loaded into R. Remeber to set the working directory to wherever the dataset is saved. Use the `setwd()` command. `MCMCpack` should also be loaded into the workspace.
+
+```{r, echo=TRUE, results='hide'}
+data0 <- read.delim("~/Downloads/pigment.dat", header = T, sep = " ")
+require(MCMCpack)
+```
+Next, the data must be organized, and initial values must be prepared for use by the algorithm. This is demonstrated below. Note how empty matrices are initialized as empty so that information can be stored in them. This makes the code for the gibbs sampler much easier to run. Also, compare the variable names with the previously mentioned variables.
+```{r, echo=TRUE}
+datas1 <- subset(data0, data0$Sample==1)
+datas2 <- subset(data0, data0$Sample==2)
+vara <- 86
+varb <- 58
+vare <- 1
+num.its <- 10000
+mu <- rep(0,num.its)
+a <- rep(0,num.its*15)
+dim(a) <- c(num.its,15)
+b <- rep(0,num.its*15)
+dim(b) <- c(num.its,15)
+y <- rep(0,num.its*15)
+dim(y) <- c(num.its,15)
+set.seed(24)
+e <- rnorm(15, mean=0, sd=sqrt(vare))
+n <- 30
+I <- as.data.frame(c(1:15))
+J <- 2
+yi. <- rep(0,15)
+for(i in 1:15){
+  yi.[i] <- mean(subset(data0[,3], data0[,1]==i))
+}
+y.. <- mean(data0[,3])
+v1 <- ((2/vare)+(1/vara))^(-1)
+v2 <- ((1/vare)+(1/varb))^(-1)
+
+set.seed(24)
+a[1,] <- rnorm(15, mean=0, sd=sqrt(vara))
+b[1,] <- rnorm(15, mean=0, sd=sqrt(varb))
+mu[1] <- rnorm(1,mean=mean(data0[,3]),sd=sd(data0[,3]))
+
+y[1,] <- mu[i]+a[i,]+b[i,]+e-mu[i-1]-a[i-1,]
+```
+Furthermore, notice that `num.its` is set to 10000. This is fairly common because 10000 iterations is usually enough to see convergence.  
+\bigskip
+Next, implement the gibbs sampler on each parameterization. First implement it on the initial parameterization, with
+```{r, echo=TRUE}
+set.seed(24)
+for(i in 2:num.its){
+  mu[i] <- rnorm(1,mean= ((mu[i]+a[i,]+b[i,]+e-mu[i-1]-a[i-1,])/n)-(2*sum(a[i-1,])/n)-((sum(b[i-1,]))/n), sd=sqrt(vare/n))
+  for(j in 1:15){
+    a[i,j] <- rnorm(1,mean=(J*v1/vare)*((yi.[j])-mu[i]-(1/J)*sum(b[i-1])),sd= sqrt(v1))
+    b[i,] <- rnorm(1,mean=(v2/vare)*(mu[i]+a[i,]+b[i,]+e-mu[i]-a[i,j]),sd=sqrt(v2))
+  }
+  y[i,] <- mu[i]+a[i,]+b[i,]+e-mu[i-1]-a[i-1,]
+}
+```
+Now, the convergence of the plots can be visualized. This is done via Sample Path plots, and is demonstrated below.
+```{r, echo=TRUE}
+par(mfrow=c(2,2))
+plot(a[,2],type="l",ylab="Alpha",xlab="Iteration")
+plot(b[,3],type="l",ylab="Beta",xlab="Iteration")
+plot(y[,1],type="l",ylab="Y",xlab="Iteration")
+plot(mu, type="l",ylab="Mu",xlab="Iteration")
+mtext("Parameter Sample Paths", outer = TRUE, cex = 1.5, line = -2)
+```
+According to these sample paths, $\alpha$ and $\mu$ mixed very well. They converged to  value with very little movement. On the other hand, $Y$ and $\beta$ did not mix as well. Their paths approach some value, and then move wildly around it. When this happens, the parameter did not mix (converge) very well.  
+\bigskip
+A viable method ensuring better mixing of these parameters is the burn in method. This method essentially cuts off the first part of the sample path, so that they have a better starting position and mix faster.  
+```{r, echo=TRUE}
+burn.in <- 1:1000
+summary.a <- summary(a[-burn.in])
+summary.b <- summary(b[-burn.in,1])
+summary.mu <- summary(mu[-burn.in])
+summary.y <- summary(y[-burn.in,1])
+round(rbind(summary.a,summary.b,summary.mu,summary.y),2)
+```
+
+Next, a cumulative sum plot (sometimes called a cum-sum plot) is generated to better visualize how well these parameters mixed. The cumulative sum plot for a well-mixed parameter will fluctuate around zero as the iteration number increases. We can determine how well these parameters mixed with the code given below.
+```{r echo=TRUE}
+par(mfrow=(c(2,2)))
+# mu burn in
+temp <- mu[-burn.in]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="mu")
+
+# alpha burn in
+temp <- a[-burn.in,1]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="alpha")
+
+# beta burn in 
+temp <- b[-burn.in,1]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="beta")
+
+# predictor burn in
+temp <- y[-burn.in,1]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="y")
+mtext("Cumulative Sum Plots", outer = TRUE, cex = 1.5, line = -2)
+```
+Based on these plots, it is evident that, while some mixed better than others, they did not do particularly well in general.  
+\bigskip
+Finally, an autocorrelation plot can be used for diagnostic purposes on a gibbs sampler. For a well-mixed parameter, an autocorrelation plot will start at some extreme value, and then quickly converge to zero. The code below demonstrates this.
+```{r, echo=TRUE}
+par(mfrow=c(2,2))
+acf(a[-burn.in,1], lag.max=15, type="correlation", xlab="alpha");
+acf(b[-burn.in,1], lag.max=15, type="correlation", xlab="beta");
+acf(mu[-burn.in], lag.max=15, type="correlation", xlab="mu");
+acf(y[-burn.in,1], lag.max=15, type="correlation", xlab="y");
+```
+It is evident that only $Y$ and $\beta$ converged efficiently. $\mu$ did converge somewhat, however it fails to meet the criteria of successful mixing. This criteria is indicated in blue.  
+
+In order to compare the reparameterized set of distributions to the initial set of distributions, this entire process must be completed again, but for the reparaeterized distributions. This will be done with little explanation, considering an explanation was provided above.  
+\bigskip
+First, initialize parameters and variables.
+```{r, echo=TRUE}
+datas1 <- subset(data0, data0$Sample==1)
+datas2 <- subset(data0, data0$Sample==2)
+vara <- 86
+varb <- 58
+vare <- 1
+num.its <- 10000
+v1 <- ((2/vare)+(1/vara))^(-1)
+v2 <- ((1/vare)+(1/varb))^(-1)
+v3 <- 1/((2/varb)/(1/vara))
+mu <- rep(0,num.its)
+y <- rep(0,num.its*3)
+dim(y) <- c(num.its,3)
+n <- rep(0,num.its*3)
+dim(n) <- c(num.its,3)
+
+
+set.seed(24)
+mu[1] <- rnorm(1,mean=mean(data0[,3]),sd=sd(data0[,3]))
+e <- rnorm(3,mean=0,sd=sqrt(vare))
+y[1,] <- rnorm(3,mean=mu[1],sd=sqrt(vara))
+n[1,] <- rnorm(3,mean=y[1,],sd=sqrt(varb))
+```
+
+Then, run the gibbs sampler on reparameterized distributions.
+```{r, echo=TRUE}
+for(i in 2:num.its){
+  mu[i] <- rnorm(1,(1/15)*sum(y[i-1,]),(1/15)*vara)
+  y[i,] <- rnorm(3,mean=v3*((1/varb)*(sum(n[i-1,])+(mu[i]/vara))),sd=sqrt(v3))
+  n[i,] <- rnorm(3,mean=v2*((mu[i]+a[i,]+b[i,]+e)/vare)+(y[i,]/varb),sd=sqrt(v2))
+}
+```
+Next, plot the various diagnostic plots, including the sample path plot, cumulative sum plot, and autocorrelation plot.
+```{r, echo=TRUE}
+par(mfrow=c(2,2))
+plot(mu,type="l",ylab="Mu",xlab="Iteration")
+plot(y[,2],type="l",ylab="Y",xlab="Iteration")
+plot(n[,2],type="l",ylab="nj",xlab="Iteration")
+```
+Interestingly, $\mu$ has much worse mixing than the initial set of distributions.
+
+Next is the burn in, and then cumulative sum plots.
+```{r, echo=TRUE}
+burn.in <- 1:1000
+summary.mu <- summary(mu[-burn.in])
+summary.y <- summary(y[-burn.in,1])
+summary.n <- summary(n[-burn.in])
+round(rbind(summary.n,summary.mu,summary.y),2)
+```
+```{r, echo=TRUE}
+par(mfrow=c(2,2))
+temp <- mu[-burn.in]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="mu")
+
+temp <- y[-burn.in,1]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="y")
+
+temp <- n[-burn.in,1]
+ntemp <- length(temp)      
+mtemp <- mean(temp)
+temp <- cumsum(temp-mtemp)
+plot(temp, type="l", xlab="iteration", ylab="n")
+```
+The cumulative sum of each iteration stays much closer to 0 than in the initial cumulative sum plots. This lends itself to the conclusion that the reparameterization allowed the Gibbs sampler to perform better. However, all diagnostic plots should be considered before making any conclusions.  
+\bigskip
+Finally, plot the autocorrelation plots.
+```{r, echo=TRUE}
+par(mfrow=c(2,2))
+acf(y[-burn.in,1], lag.max=20, type="correlation", xlab="y");
+acf(n[-burn.in,1], lag.max=20, type="correlation", xlab="N");
+acf(mu[-burn.in], lag.max=20, type="correlation", xlab="Mu");
+```
+These autocorrelation plots confirm the notion that the reparameterization increased the efficiency of the Gibbs sampler algorithm.  
+
+## Results and Conclusions
+
+Based on the diagnostic plots above, it can be reasonable concluded that the reparameterization of the distributions was effective. Every single diagnostic plot demonstrated better performance on the second set of distributions. Although the sample path for the $\mu$ variable suggested that the reparameterization had been effective, the autocorrelation plot is far more effective and making these determinations. It is essentially a more trustworthy diagnostic test. Therefore, the reparameterization of these distributions was effective.
+
